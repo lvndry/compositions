@@ -1,0 +1,456 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Multiplexing — one wire, many conversations</title>
+<style>
+:root {
+  color-scheme: dark;
+  --accent-h: 188;
+  --accent-s: 84%;
+  --accent-l: 62%;
+
+  --accent: hsl(var(--accent-h) var(--accent-s) var(--accent-l));
+  --accent-strong: hsl(var(--accent-h) var(--accent-s) calc(var(--accent-l) - 12%));
+  --accent-soft: hsl(var(--accent-h) var(--accent-s) calc(var(--accent-l) + 6%) / 0.16);
+  --accent-text: hsl(var(--accent-h) var(--accent-s) calc(var(--accent-l) + 12%));
+
+  --series-2: hsl(var(--accent-h) calc(var(--accent-s) - 34%) calc(var(--accent-l) - 24%));
+
+  --bg: hsl(200 18% 7%);
+  --surface: hsl(200 15% 11%);
+  --surface-2: hsl(200 13% 16%);
+  --ink: hsl(196 16% 93%);
+  --ink-muted: hsl(200 9% 63%);
+  --ink-faint: hsl(200 9% 43%);
+  --line: hsl(200 12% 22%);
+
+  --radius: 12px;
+  --radius-sm: 8px;
+  --shadow-1: 0 1px 2px hsl(0 0% 0% / 0.3);
+  --shadow-2: 0 8px 24px hsl(0 0% 0% / 0.35);
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --dur-fast: 150ms;
+  --dur-med: 300ms;
+  --dur-slow: 600ms;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 16px;
+  --space-4: 24px;
+  --space-5: 40px;
+  --space-6: 64px;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+main { max-width: 960px; margin: 0 auto; padding: var(--space-5) var(--space-4) var(--space-6); }
+h1, h2, h3 { line-height: 1.2; text-wrap: balance; }
+h1 { font-size: clamp(1.75rem, 1.2rem + 2.5vw, 2.75rem); font-weight: 700; letter-spacing: -0.02em; margin: 0 0 var(--space-2); }
+h2 { font-size: 1.15rem; font-weight: 600; margin: var(--space-5) 0 var(--space-3); }
+h2 .kicker { color: var(--ink-faint); font-variant-numeric: tabular-nums; margin-right: var(--space-2); }
+.subtitle { color: var(--ink-muted); font-size: clamp(1rem, 0.9rem + 0.5vw, 1.15rem); margin: 0 0 var(--space-5); text-wrap: pretty; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: var(--space-4); box-shadow: var(--shadow-1); }
+.num { font-variant-numeric: tabular-nums; }
+.stat-value { font-size: clamp(1.6rem, 1.3rem + 1.8vw, 2.6rem); font-weight: 700; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
+.stat-label { color: var(--ink-muted); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.08em; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: var(--space-3); margin-top: var(--space-4); }
+.stat { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: var(--space-3) var(--space-4); }
+
+.reveal { opacity: 0; transform: translateY(12px); animation: reveal-in 450ms var(--ease) forwards; animation-delay: calc(var(--i, 0) * 70ms); }
+@keyframes reveal-in { to { opacity: 1; transform: none; } }
+
+svg text { fill: var(--ink); }
+.edge { stroke: var(--ink-faint); stroke-width: 1.5; fill: none; }
+.edge.hot { stroke: var(--accent); }
+.edge.draw { stroke-dasharray: 100; stroke-dashoffset: 100; animation: draw-in 800ms var(--ease) forwards; animation-delay: calc(400ms + var(--i, 0) * 160ms); }
+@keyframes draw-in { to { stroke-dashoffset: 0; } }
+.node-box { fill: var(--surface-2); stroke: var(--line); }
+.node-box.accent { fill: var(--accent-soft); stroke: hsl(var(--accent-h) var(--accent-s) var(--accent-l) / 0.45); }
+.node-label { font-size: 12.5px; font-weight: 600; }
+.node-sub { fill: var(--ink-muted); font-size: 10.5px; }
+.node { opacity: 0; animation: reveal-in 400ms var(--ease) forwards; animation-delay: calc(450ms + var(--i, 0) * 160ms); }
+.flow-svg { width: 100%; height: auto; display: block; }
+
+.fam { display: grid; grid-template-columns: 1fr; gap: var(--space-3); }
+@media (min-width: 680px) { .fam { grid-template-columns: repeat(3, 1fr); } }
+.fam .card { padding: var(--space-3) var(--space-4); }
+.fam h3 { margin: 0 0 var(--space-2); font-size: 0.95rem; }
+.fam h3 .n { color: var(--accent-text); font-variant-numeric: tabular-nums; margin-right: var(--space-2); }
+.fam p { margin: 0; color: var(--ink-muted); font-size: 0.85rem; text-wrap: pretty; }
+.fam code, .lede code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85em; color: var(--accent-text); background: var(--accent-soft); padding: 0.1em 0.4em; border-radius: 4px; }
+
+.sim { display: grid; grid-template-columns: 1fr; gap: var(--space-4); }
+@media (min-width: 720px) { .sim { grid-template-columns: 260px 1fr; } }
+.seg { display: inline-flex; gap: 2px; padding: 2px; background: var(--surface-2); border-radius: 999px; flex-wrap: wrap; }
+.seg label { position: relative; }
+.seg input { position: absolute; opacity: 0; inset: 0; }
+.seg span { display: block; padding: 6px 14px; border-radius: 999px; font-size: 0.85rem; font-weight: 500; color: var(--ink-muted); cursor: pointer; transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease); }
+.seg input:checked + span { background: var(--accent-soft); color: var(--accent-text); }
+.seg input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+.control { display: flex; flex-direction: column; gap: var(--space-2); margin-bottom: var(--space-4); }
+.control > label:first-child { font-size: 0.9rem; font-weight: 600; }
+.control .hint { color: var(--ink-muted); font-size: 0.8rem; }
+input[type=range] { width: 100%; accent-color: var(--accent); }
+output { color: var(--accent-text); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+.client-toggle { display: flex; align-items: center; gap: var(--space-2); padding: 2px 0; cursor: pointer; font-size: 0.85rem; user-select: none; }
+.client-toggle input { accent-color: var(--accent); }
+.client-toggle .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ink-faint); transition: background var(--dur-fast) var(--ease); }
+.client-toggle input:checked ~ .dot { background: var(--accent); }
+
+.grid-wrap { overflow-x: auto; }
+.grid { display: grid; gap: 3px; min-width: 560px; }
+.cell { height: 26px; border-radius: 4px; background: var(--surface-2); transition: background var(--dur-fast) var(--ease); }
+.cell.data { background: var(--accent); }
+.cell.data.s2 { background: var(--series-2); }
+.cell.ghost { background: transparent; border: 1px dashed var(--line); }
+.row-label { font-size: 0.72rem; color: var(--ink-muted); display: flex; align-items: center; }
+.row-label.off { color: var(--ink-faint); text-decoration: line-through; }
+
+.result-row { display: flex; justify-content: space-between; align-items: baseline; padding: var(--space-2) 0; border-top: 1px solid var(--line); }
+.result-row dt { color: var(--ink-muted); font-size: 0.88rem; }
+.result-row dd { margin: 0; font-weight: 700; font-size: 1.05rem; font-variant-numeric: tabular-nums; }
+.result-row dd.hot { color: var(--accent-text); }
+.pulse { animation: none; }
+.pulse.changed { animation: pulse 400ms var(--ease); }
+@keyframes pulse { 0% { opacity: 1; } 30% { opacity: 0.35; transform: scale(0.98); } 100% { opacity: 1; transform: none; } }
+
+button { font: inherit; cursor: pointer; border-radius: var(--radius-sm); border: 1px solid var(--line); background: var(--surface-2); color: var(--ink); padding: 7px 14px; font-weight: 500; font-size: 0.88rem; transition: transform var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease); }
+button:hover { transform: translateY(-1px); }
+button.primary { background: var(--accent); border-color: transparent; color: hsl(var(--accent-h) var(--accent-s) 12%); font-weight: 600; }
+button.primary:hover { background: var(--accent-strong); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius-sm); }
+[popover] { margin: auto; width: min(92vw, 480px); background: var(--surface-2); color: var(--ink); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow-2); padding: var(--space-4); }
+[popover]:open { animation: popover-in 180ms var(--ease) backwards; }
+@keyframes popover-in { from { opacity: 0; transform: translateY(6px) scale(0.98); } }
+[popover] h3 { margin: 0 0 var(--space-2); font-size: 1rem; }
+[popover] p { margin: 0 0 var(--space-2); color: var(--ink-muted); font-size: 0.88rem; text-wrap: pretty; }
+[popover] code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85em; color: var(--accent-text); }
+
+.lede { color: var(--ink-muted); font-size: 0.95rem; margin: 0 0 var(--space-3); text-wrap: pretty; }
+footer { margin-top: var(--space-6); color: var(--ink-faint); font-size: 0.78rem; display: flex; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+}
+</style>
+</head>
+<body>
+<main>
+  <h1 class="reveal" style="--i:0">Multiplexing</h1>
+  <p class="subtitle reveal" style="--i:1">
+    One physical wire, many logical conversations. The single most important
+    idea in how computers share a resource — it runs the internet, your CPU,
+    your GPU, and every event loop you have ever shipped.
+  </p>
+
+  <div class="stats">
+    <div class="stat reveal" style="--i:2">
+      <div class="stat-value num">1 → N → 1</div>
+      <div class="stat-label">The whole shape: merge, share, split</div>
+    </div>
+    <div class="stat reveal" style="--i:3">
+      <div class="stat-value num">1938</div>
+      <div class="stat-label">Time-division multiplexing standardized for telephony</div>
+    </div>
+    <div class="stat reveal" style="--i:4">
+      <div class="stat-value num">80+ λ</div>
+      <div class="stat-label">Wavelengths per fiber in modern DWDM</div>
+    </div>
+  </div>
+
+  <h2 class="reveal" style="--i:5"><span class="kicker">01</span>The core move</h2>
+  <div class="card reveal" style="--i:6">
+    <svg class="flow-svg" viewBox="0 0 900 170" role="img" aria-label="Four sources merge through a multiplexer onto one shared wire, then a demultiplexer splits them back to four destinations">
+      <defs>
+        <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="var(--ink-faint)" />
+        </marker>
+        <marker id="arrow-hot" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="var(--accent)" />
+        </marker>
+      </defs>
+
+      <path class="edge draw" pathLength="100" style="--i:0" d="M120,35 C 220,35 240,75 320,80" />
+      <path class="edge draw" pathLength="100" style="--i:1" d="M120,65 C 220,65 240,78 320,82" />
+      <path class="edge draw" pathLength="100" style="--i:2" d="M120,105 C 220,105 240,90 320,86" />
+      <path class="edge draw" pathLength="100" style="--i:3" d="M120,135 C 220,135 240,95 320,90" />
+
+      <path class="edge hot draw" pathLength="100" style="--i:4" d="M500,85 L666,85" marker-end="url(#arrow-hot)" />
+
+      <path class="edge draw" pathLength="100" style="--i:5" d="M860,85 C 878,85 878,35 862,35" />
+      <path class="edge draw" pathLength="100" style="--i:6" d="M860,85 C 872,85 872,65 862,65" />
+      <path class="edge draw" pathLength="100" style="--i:7" d="M860,85 C 872,85 872,105 862,105" />
+      <path class="edge draw" pathLength="100" style="--i:8" d="M860,85 C 878,85 878,135 862,135" />
+
+      <g class="node" style="--i:0">
+        <rect class="node-box" x="20" y="20" width="100" height="30" rx="8" />
+        <text class="node-label" x="42" y="39">Alice</text>
+      </g>
+      <g class="node" style="--i:1">
+        <rect class="node-box" x="20" y="50" width="100" height="30" rx="8" />
+        <text class="node-label" x="48" y="69">Bob</text>
+      </g>
+      <g class="node" style="--i:2">
+        <rect class="node-box" x="20" y="90" width="100" height="30" rx="8" />
+        <text class="node-label" x="42" y="109">Carol</text>
+      </g>
+      <g class="node" style="--i:3">
+        <rect class="node-box" x="20" y="120" width="100" height="30" rx="8" />
+        <text class="node-label" x="46" y="139">Dave</text>
+      </g>
+
+      <g class="node" style="--i:4">
+        <rect class="node-box accent" x="320" y="55" width="180" height="60" rx="10" />
+        <text class="node-label" x="336" y="78">Multiplexer</text>
+        <text class="node-sub" x="336" y="96">interleaves onto one medium</text>
+      </g>
+
+      <g class="node" style="--i:5">
+        <rect class="node-box accent" x="680" y="55" width="180" height="60" rx="10" />
+        <text class="node-label" x="696" y="78">Demux</text>
+        <text class="node-sub" x="696" y="96">reads the same schedule</text>
+      </g>
+
+      <g class="node" style="--i:6">
+        <rect class="node-box" x="862" y="20" width="34" height="30" rx="8" />
+        <text class="node-sub" x="874" y="39">A</text>
+      </g>
+      <g class="node" style="--i:7">
+        <rect class="node-box" x="862" y="50" width="34" height="30" rx="8" />
+        <text class="node-sub" x="874" y="69">B</text>
+      </g>
+      <g class="node" style="--i:8">
+        <rect class="node-box" x="862" y="90" width="34" height="30" rx="8" />
+        <text class="node-sub" x="874" y="109">C</text>
+      </g>
+      <g class="node" style="--i:9">
+        <rect class="node-box" x="862" y="120" width="34" height="30" rx="8" />
+        <text class="node-sub" x="874" y="139">D</text>
+      </g>
+
+      <text x="508" y="70" fill="var(--accent-text)" font-size="11" font-weight="600">wire</text>
+    </svg>
+    <p style="color: var(--ink-muted); font-size: 0.88rem; margin: var(--space-3) 0 0; text-wrap: pretty;">
+      The trick: the medium (wire, fiber, CPU, disk head) is shared, and every
+      user gets a <em>slicing rule</em> — by time, frequency, wavelength, or
+      packet — agreed on by both ends. There is no magic; the entire art is
+      choosing the slicing rule.
+    </p>
+  </div>
+
+  <h2 class="reveal" style="--i:7"><span class="kicker">02</span>Three slicing rules, one idea</h2>
+  <div class="fam">
+    <div class="card reveal" style="--i:8">
+      <h3><span class="n">1</span>Time — TDM</h3>
+      <p>Each user owns fixed <b>time slots</b> on the wire, in rotation. The
+      telephone standard: 30 voice channels, 125 µs frames, one sample each.
+      Your CPU time-slicing is exactly this: the scheduler hands the core to
+      each thread in rotation.</p>
+    </div>
+    <div class="card reveal" style="--i:9">
+      <h3><span class="n">2</span>Frequency / wavelength — FDM / WDM</h3>
+      <p>Each user owns a <b>band</b> that runs all the time. Radio stations
+      never collide because they're on different frequencies; fiber carries
+      80+ wavelengths at once (DWDM), each a full gigabit pipe.</p>
+    </div>
+    <div class="card reveal" style="--i:10">
+      <h3><span class="n">3</span>Content — statistical</h3>
+      <p>No reservations. Packets carry a <b>destination tag</b> and grab the
+      wire whenever they exist. Data is bursty — someone is usually silent —
+      so the average user gets more than their TDM slot. This is the whole
+      internet, and it is why the web works at all.</p>
+    </div>
+  </div>
+
+  <h2 class="reveal" style="--i:11"><span class="kicker">03</span>Watch the waste appear and vanish</h2>
+  <p class="lede reveal" style="--i:12">
+    Same four users, same wire. In TDM everyone keeps a slot forever — flip a
+    user off and their slots turn into pure waste. Statistical multiplexing
+    hands the wire to whoever has data. Toggle users, switch modes.
+  </p>
+  <div class="card reveal sim" style="--i:13">
+    <div>
+      <div class="control">
+        <label>Mode</label>
+        <div class="seg" role="radiogroup" aria-label="Multiplexing mode">
+          <label><input type="radio" name="mode" value="tdm" checked /><span>TDM (fixed slots)</span></label>
+          <label><input type="radio" name="mode" value="stat" /><span>Statistical</span></label>
+        </div>
+      </div>
+      <div class="control">
+        <label for="activity">Activity per user</label>
+        <input type="range" id="activity" min="10" max="100" step="5" value="75" />
+        <output for="activity" id="activity-out" aria-live="polite">75%</output>
+        <span class="hint">Real traffic is bursty: most of the time a user
+        has nothing to send.</span>
+      </div>
+      <div class="control">
+        <label>Users on the wire</label>
+        <label class="client-toggle"><input type="checkbox" class="client" data-i="0" checked /><span class="dot"></span>Alice</label>
+        <label class="client-toggle"><input type="checkbox" class="client" data-i="1" checked /><span class="dot"></span>Bob</label>
+        <label class="client-toggle"><input type="checkbox" class="client" data-i="2" checked /><span class="dot"></span>Carol</label>
+        <label class="client-toggle"><input type="checkbox" class="client" data-i="3" checked /><span class="dot"></span>Dave</label>
+        <span class="hint">Each column = one time slot on the wire. Dashed =
+        reserved but empty (TDM waste).</span>
+      </div>
+      <button popovertarget="why">Why does this matter?</button>
+    </div>
+    <div>
+      <div class="grid-wrap">
+        <div class="grid" id="grid" role="img" aria-label="Time-slot grid showing how the shared wire is allocated in the selected mode"></div>
+      </div>
+      <dl style="margin-top: var(--space-4);">
+        <div class="result-row">
+          <dt>Wire utilization</dt>
+          <dd class="num hot pulse" id="out-util">—</dd>
+        </div>
+        <div class="result-row">
+          <dt>Wasted capacity</dt>
+          <dd class="num pulse" id="out-waste">—</dd>
+        </div>
+      </dl>
+    </div>
+  </div>
+
+  <div id="why" popover>
+    <h3>The one trade</h3>
+    <p>TDM gives everyone a <b>guarantee</b> — your slot is yours even in a
+    storm of traffic. That guarantee is the price: silence burns slots.</p>
+    <p>Statistical gives no guarantees — a bursty neighbor can starve you —
+    but the aggregate carries far more load. Real networks stack both:
+    statistical on top, with <b>queuing</b> (packet buffers) and traffic
+    shaping as the safety net.</p>
+    <p>In your codebase the same choice recurs constantly: a fixed worker pool
+    (TDM) vs. an event loop with <code>epoll</code> (statistical) — which is
+    exactly why <code>epoll</code> scales to thousands of connections and
+    thread-per-connection doesn't.</p>
+    <button class="primary" style="margin-top: var(--space-3);" popovertarget="why" popovertargetaction="hide">Got it</button>
+  </div>
+
+  <h2 class="reveal" style="--i:14"><span class="kicker">04</span>Where you already know this</h2>
+  <div class="fam">
+    <div class="card reveal" style="--i:15">
+      <h3>CPU scheduling</h3>
+      <p>The core is one wire. Round-robin is TDM; priority scheduling is a
+      policy on top. Context switching is the demux — expensive enough that
+      people built <code>epoll</code> to avoid paying it per connection.</p>
+    </div>
+    <div class="card reveal" style="--i:16">
+      <h3>I/O multiplexing</h3>
+      <p><code>select</code>/<code>poll</code>/<code>epoll</code>: one thread
+      multiplexes thousands of sockets. The event loop is the mux; readiness
+      bits are the tags. This is Node, Redis, and nginx in one sentence.</p>
+    </div>
+    <div class="card reveal" style="--i:17">
+      <h3>GPU &amp; memory</h3>
+      <p>Time-sliced multi-GPU, spatial partitioning of compute, and virtual
+      memory: every process's pages multiplexed onto physical RAM by a
+      translation table — the demux is the TLB.</p>
+    </div>
+  </div>
+
+  <footer class="reveal" style="--i:18">
+    <span>Multiplexing = shared medium + an agreed slicing rule + a demux that
+    reverses it. Everything else is a variation on the slot.</span>
+    <span>Simulator: 16 slots × 4 users, round-robin allocation, no queuing or
+    contention shown — statistical can starve a user under real overload.</span>
+  </footer>
+</main>
+
+<script>
+const NS = 16, NC = 4;
+const names = ["Alice", "Bob", "Carol", "Dave"];
+const grid = document.getElementById("grid");
+const clients = [...document.querySelectorAll(".client")];
+const act = document.getElementById("activity");
+let mode = "tdm";
+let activity = 75;
+
+function render() {
+  const on = clients.map(c => c.checked);
+  // per-user, per-slot burstiness (deterministic)
+  const has = (r, t) => ((t * 13 + r * 7 + 3) % 100) < activity;
+  grid.innerHTML = "";
+  grid.style.gridTemplateColumns = `90px repeat(${NS}, 1fr)`;
+  const usedSlots = new Set();
+
+  for (let r = 0; r < NC; r++) {
+    const lbl = document.createElement("div");
+    lbl.className = "row-label" + (on[r] ? "" : " off");
+    lbl.textContent = names[r];
+    grid.appendChild(lbl);
+    for (let t = 0; t < NS; t++) {
+      const cell = document.createElement("div");
+      cell.className = "cell";
+      if (mode === "tdm") {
+        // round-robin fixed slots: user r owns slots r, r+NC, r+2NC...
+        const mine = (t % NC) === r;
+        if (on[r] && mine && has(r, t)) { cell.classList.add("data"); if (r % 2) cell.classList.add("s2"); usedSlots.add(t); }
+        else if (mine) { cell.classList.add("ghost"); }
+      } else {
+        // statistical: round-robin among the users who have data this slot
+        const talkers = [];
+        for (let i = 0; i < NC; i++) if (on[i] && has(i, t)) talkers.push(i);
+        if (talkers.length === 0) { grid.appendChild(cell); continue; }
+        const turn = talkers[t % talkers.length];
+        if (turn === r) { cell.classList.add("data"); if (r % 2) cell.classList.add("s2"); usedSlots.add(t); }
+        else { cell.classList.add("ghost"); }
+      }
+      grid.appendChild(cell);
+    }
+  }
+
+  const util = Math.round((usedSlots.size / NS) * 100);
+  const u = document.getElementById("out-util");
+  const w = document.getElementById("out-waste");
+  u.textContent = util + "%";
+  w.textContent = (100 - util) + "%";
+  for (const el of [u, w]) { el.classList.remove("changed"); void el.offsetWidth; el.classList.add("changed"); }
+}
+
+act.addEventListener("input", () => {
+  activity = +act.value;
+  document.getElementById("activity-out").textContent = activity + "%";
+  render();
+});
+document.querySelectorAll('input[name="mode"]').forEach(r =>
+  r.addEventListener("change", () => { mode = r.value; render(); }));
+clients.forEach(c => c.addEventListener("change", render));
+
+// deep-link state
+const sp = new URLSearchParams(location.search);
+if (sp.get("mode") === "stat") {
+  mode = "stat";
+  document.querySelector('input[name="mode"][value="stat"]').checked = true;
+}
+clients.forEach(c => { const v = sp.get("u" + c.dataset.i); if (v !== null) c.checked = v === "1"; });
+const av = sp.get("a");
+if (av !== null && av !== "") {
+  activity = +av;
+  act.value = activity;
+  document.getElementById("activity-out").textContent = activity + "%";
+}
+function save() {
+  const p = new URLSearchParams();
+  p.set("mode", mode);
+  p.set("a", activity);
+  clients.forEach(c => p.set("u" + c.dataset.i, c.checked ? "1" : "0"));
+  history.replaceState(null, "", `${location.pathname}?${p}`);
+}
+clients.forEach(c => c.addEventListener("change", save));
+document.querySelectorAll('input[name="mode"]').forEach(r => r.addEventListener("change", save));
+render();
+</script>
+</body>
+</html>
