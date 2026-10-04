@@ -1,0 +1,361 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>How the Jazz composition tool works</title>
+<style>
+:root {
+  color-scheme: dark;
+  --accent-h: 160;
+  --accent-s: 78%;
+  --accent-l: 52%;
+
+  --accent: hsl(var(--accent-h) var(--accent-s) var(--accent-l));
+  --accent-strong: hsl(var(--accent-h) var(--accent-s) calc(var(--accent-l) - 12%));
+  --accent-soft: hsl(var(--accent-h) var(--accent-s) calc(var(--accent-l) + 6%) / 0.15);
+  --accent-text: hsl(var(--accent-h) var(--accent-s) calc(var(--accent-l) + 14%));
+
+  --bg: hsl(200 22% 6%);
+  --surface: hsl(200 18% 10%);
+  --surface-2: hsl(200 15% 15%);
+  --ink: hsl(198 18% 94%);
+  --ink-muted: hsl(200 10% 66%);
+  --ink-faint: hsl(200 9% 45%);
+  --line: hsl(200 14% 22%);
+
+  --radius: 14px;
+  --radius-sm: 9px;
+  --shadow-1: 0 1px 2px hsl(0 0% 0% / 0.3);
+  --shadow-2: 0 10px 30px hsl(0 0% 0% / 0.4);
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --dur-fast: 150ms;
+  --dur-med: 300ms;
+  --dur-slow: 600ms;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 16px;
+  --space-4: 24px;
+  --space-5: 40px;
+  --space-6: 64px;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  background:
+    radial-gradient(1200px 500px at 80% -10%, hsl(var(--accent-h) var(--accent-s) var(--accent-l) / 0.08), transparent 60%),
+    var(--bg);
+  color: var(--ink);
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+main { max-width: 940px; margin: 0 auto; padding: var(--space-5) var(--space-4) var(--space-6); }
+h1, h2, h3 { line-height: 1.18; text-wrap: balance; }
+h1 { font-size: clamp(1.9rem, 1.2rem + 3vw, 3.1rem); font-weight: 700; letter-spacing: -0.025em; margin: 0 0 var(--space-2); }
+h2 { font-size: 1.12rem; font-weight: 600; margin: var(--space-6) 0 var(--space-3); }
+h2 .kicker { color: var(--accent-text); font-variant-numeric: tabular-nums; margin-right: var(--space-2); }
+.subtitle { color: var(--ink-muted); font-size: clamp(1.02rem, 0.95rem + 0.5vw, 1.2rem); margin: 0 0 var(--space-5); max-width: 60ch; text-wrap: pretty; }
+.lede { color: var(--ink-muted); font-size: 1rem; max-width: 66ch; }
+.lede b { color: var(--ink); font-weight: 600; }
+code, .code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85em;
+  color: var(--accent-text);
+  background: var(--accent-soft);
+  padding: 0.08em 0.4em;
+  border-radius: 5px;
+}
+
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: var(--space-4); box-shadow: var(--shadow-1); }
+
+.reveal { opacity: 0; transform: translateY(12px); animation: reveal-in 480ms var(--ease) forwards; animation-delay: calc(var(--i, 0) * 70ms); }
+@keyframes reveal-in { to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .reveal { animation: none; opacity: 1; transform: none; }
+  .node, .edge.draw { animation: none !important; opacity: 1 !important; stroke-dashoffset: 0 !important; }
+}
+
+/* Flow diagram */
+.flow-svg { width: 100%; height: auto; display: block; }
+svg text { fill: var(--ink); }
+.edge { stroke: var(--ink-faint); stroke-width: 1.5; fill: none; }
+.edge.hot { stroke: var(--accent); }
+.edge.draw { stroke-dasharray: 100; stroke-dashoffset: 100; animation: draw-in 800ms var(--ease) forwards; animation-delay: calc(300ms + var(--i, 0) * 180ms); }
+@keyframes draw-in { to { stroke-dashoffset: 0; } }
+.node-box { fill: var(--surface-2); stroke: var(--line); }
+.node-box.accent { fill: var(--accent-soft); stroke: hsl(var(--accent-h) var(--accent-s) var(--accent-l) / 0.5); }
+.node-label { font-size: 13px; font-weight: 600; }
+.node-sub { fill: var(--ink-muted); font-size: 10.5px; }
+.node { opacity: 0; animation: reveal-in 420ms var(--ease) forwards; animation-delay: calc(350ms + var(--i, 0) * 180ms); }
+
+/* Capability grid */
+.fam { display: grid; grid-template-columns: 1fr; gap: var(--space-3); margin-top: var(--space-3); }
+@media (min-width: 660px) { .fam { grid-template-columns: repeat(2, 1fr); } }
+.fam .card { padding: var(--space-4); }
+.fam .ico { font-size: 1.3rem; line-height: 1; display: block; margin-bottom: var(--space-2); }
+.fam h3 { margin: 0 0 var(--space-2); font-size: 1rem; }
+.fam p { margin: 0; color: var(--ink-muted); font-size: 0.86rem; text-wrap: pretty; }
+
+/* Tabs */
+.tabs { display: inline-flex; gap: 2px; padding: 3px; background: var(--surface-2); border-radius: 999px; flex-wrap: wrap; margin-bottom: var(--space-4); }
+.tabs button {
+  appearance: none; border: 0; background: transparent; cursor: pointer;
+  padding: 8px 16px; border-radius: 999px; font-size: 0.88rem; font-weight: 500;
+  color: var(--ink-muted); font-family: inherit;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.tabs button[aria-selected="true"] { background: var(--accent-soft); color: var(--accent-text); }
+.tabs button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.panel { display: none; }
+.panel.active { display: block; animation: reveal-in 300ms var(--ease); }
+.panel .code-block {
+  background: hsl(200 20% 5%); border: 1px solid var(--line); border-radius: var(--radius-sm);
+  padding: var(--space-3) var(--space-4); margin: var(--space-2) 0; overflow-x: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.8rem; line-height: 1.6;
+  color: var(--ink-muted); white-space: pre;
+}
+.panel .code-block .k { color: var(--accent-text); }
+.panel .code-block .s { color: hsl(40 80% 70%); }
+.panel .code-block .c { color: var(--ink-faint); }
+.panel p { color: var(--ink-muted); font-size: 0.9rem; }
+.panel p b { color: var(--ink); }
+
+/* Steps */
+.steps { display: grid; gap: var(--space-3); margin-top: var(--space-3); }
+.step { display: grid; grid-template-columns: auto 1fr; gap: var(--space-3); align-items: start; }
+.step .n {
+  width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--accent-soft); color: var(--accent-text); font-weight: 700; font-size: 0.9rem;
+  border: 1px solid hsl(var(--accent-h) var(--accent-s) var(--accent-l) / 0.3);
+  font-variant-numeric: tabular-nums;
+}
+.step h3 { margin: 0 0 var(--space-1); font-size: 0.98rem; }
+.step p { margin: 0; color: var(--ink-muted); font-size: 0.88rem; }
+
+/* Property chips */
+.props { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-3); }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: 999px;
+  padding: 7px 14px; font-size: 0.83rem; color: var(--ink-muted);
+}
+.chip .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+
+/* CTA */
+.cta { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-top: var(--space-4); }
+.btn {
+  display: inline-flex; align-items: center; gap: 8px; text-decoration: none;
+  padding: 12px 22px; border-radius: 999px; font-size: 0.95rem; font-weight: 600;
+  transition: transform var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
+}
+.btn:hover { transform: translateY(-2px); }
+.btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.btn-primary { background: var(--accent); color: hsl(var(--accent-h) 40% 8%); box-shadow: var(--shadow-2); }
+.btn-primary:hover { background: var(--accent-strong); }
+.btn-ghost { background: transparent; color: var(--ink); border: 1px solid var(--line); }
+.btn-ghost:hover { border-color: var(--accent); color: var(--accent-text); }
+
+footer { margin-top: var(--space-6); color: var(--ink-faint); font-size: 0.8rem; display: flex; flex-wrap: wrap; gap: var(--space-2); justify-content: space-between; }
+footer a { color: var(--ink-muted); text-decoration: none; }
+footer a:hover { color: var(--accent-text); }
+</style>
+</head>
+<body>
+<main>
+  <header class="reveal" style="--i:0">
+    <h1>How the Jazz composition tool works</h1>
+    <p class="subtitle">
+      One agent call turns a plain-English description into a
+      <b>single, self-contained HTML file</b> you can open, share, or publish — no build step,
+      no dependencies, no server.
+    </p>
+  </header>
+
+  <section>
+    <h2 class="reveal" style="--i:1"><span class="kicker">01</span> The shape of it</h2>
+    <svg class="flow-svg" viewBox="0 0 900 300" role="img" aria-label="Flow: your request becomes an HTML file, saved to disk, opened in a browser, and optionally published to a URL">
+      <!-- edges -->
+      <path class="edge draw" style="--i:0" pathLength="100" d="M180,150 L250,150" marker-end="url(#arw)" />
+      <path class="edge draw" style="--i:1" pathLength="100" d="M370,150 L440,150" marker-end="url(#arw)" />
+      <path class="edge draw" style="--i:2" pathLength="100" d="M560,150 L630,150" marker-end="url(#arw)" />
+      <path class="edge draw hot" style="--i:3" pathLength="100" d="M180,150 C 180,240 700,240 700,180" marker-end="url(#arw)" />
+      <defs>
+        <marker id="arw" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="context-stroke" />
+        </marker>
+      </defs>
+
+      <!-- nodes -->
+      <g class="node" style="--i:0">
+        <rect class="node-box" x="40" y="105" width="140" height="90" rx="14" />
+        <text class="node-label" x="110" y="142" text-anchor="middle">You describe it</text>
+        <text class="node-sub" x="110" y="162" text-anchor="middle">in plain English</text>
+        <text class="node-sub" x="110" y="177" text-anchor="middle">to the agent</text>
+      </g>
+      <g class="node" style="--i:1">
+        <rect class="node-box accent" x="250" y="105" width="120" height="90" rx="14" />
+        <text class="node-label" x="310" y="140" text-anchor="middle">create</text>
+        <text class="node-label" x="310" y="157" text-anchor="middle">composition</text>
+        <text class="node-sub" x="310" y="176" text-anchor="middle">agent tool</text>
+      </g>
+      <g class="node" style="--i:2">
+        <rect class="node-box" x="440" y="105" width="120" height="90" rx="14" />
+        <text class="node-label" x="500" y="140" text-anchor="middle">one .html</text>
+        <text class="node-sub" x="500" y="160" text-anchor="middle">saved to disk</text>
+        <text class="node-sub" x="500" y="175" text-anchor="middle">in the session</text>
+      </g>
+      <g class="node" style="--i:3">
+        <rect class="node-box" x="630" y="105" width="140" height="90" rx="14" />
+        <text class="node-label" x="700" y="140" text-anchor="middle">opened</text>
+        <text class="node-sub" x="700" y="160" text-anchor="middle">in your browser</text>
+        <text class="node-sub" x="700" y="175" text-anchor="middle">or → a live URL</text>
+      </g>
+    </svg>
+  </section>
+
+  <section>
+    <h2 class="reveal" style="--i:4"><span class="kicker">02</span> What it can build</h2>
+    <div class="tabs" role="tablist" aria-label="Composition types">
+      <button role="tab" id="tab-sim" aria-controls="p-sim" aria-selected="true" data-t="sim">Interactive sim</button>
+      <button role="tab" id="tab-deck" aria-controls="p-deck" data-t="deck">Slide deck</button>
+      <button role="tab" id="tab-form" aria-controls="p-form" data-t="form">Form / wizard</button>
+      <button role="tab" id="tab-diag" aria-controls="p-diag" data-t="diag">Diagram</button>
+    </div>
+    <div class="card">
+      <div class="panel active" id="p-sim" role="tabpanel" aria-labelledby="tab-sim">
+        <p>A live page for <b>hover, filters, sliders and games</b>. Every control is real DOM — no framework. State deep-links via query params, so a configuration is a shareable URL.</p>
+        <div class="code-block"><span class="c">// one file: html + css + js, zero dependencies</span>
+<span class="k">const</span> act = document.querySelector(<span class="s">'input[type=range]'</span>);
+act.addEventListener(<span class="s">"input"</span>, () =&gt; {
+  state.rate = +act.value;
+  render();           <span class="c">// re-draw the SVG / recompute</span>
+  save();             <span class="c">// → ?rate=400 — shareable</span>
+});</div>
+      </div>
+      <div class="panel" id="p-deck" role="tabpanel" aria-labelledby="tab-deck">
+        <p>16:9 slides with <b>keyboard, click and touch navigation</b>, <code>#n</code> deep links, a progress line and per-slide speaker notes. Built on the View Transitions API for a native-feeling morph between slides.</p>
+        <div class="code-block"><span class="c">// navigate + deep link</span>
+addEventListener(<span class="s">"keydown"</span>, (e) =&gt; {
+  <span class="k">if</span> (e.key === <span class="s">"ArrowRight"</span>) go(i + 1);
+  <span class="k">if</span> (e.key === <span class="s">"ArrowLeft"</span>)  go(i - 1);
+});
+<span class="c">// #3 opens straight onto slide three</span></div>
+      </div>
+      <div class="panel" id="p-form" role="tabpanel" aria-labelledby="tab-form">
+        <p>Inline, side-by-side or <b>wizard</b> layouts using native inputs — with blur validation, empty states and offline persistence (URL params + <code>localStorage</code>). Works as a capture-and-export surface for the agent.</p>
+        <div class="code-block"><span class="c">// offline persistence</span>
+form.addEventListener(<span class="s">"submit"</span>, (e) =&gt; {
+  e.preventDefault();
+  localStorage.setItem(<span class="s">"draft"</span>, JSON.stringify(data));
+  <span class="c">// or export a download / copy to clipboard</span>
+});</div>
+      </div>
+      <div class="panel" id="p-diag" role="tabpanel" aria-labelledby="tab-diag">
+        <p>Hand-rolled <b>SVG</b>: flow diagrams, sequence diagrams, ERDs, architecture. Every path uses <code>pathLength="100"</code> so line-draw animation is uniform, and even gaps keep arrowheads clear of the nodes.</p>
+        <div class="code-block"><span class="c">&lt;!-- uniform draw-in regardless of length --&gt;</span>
+&lt;path class=<span class="s">"edge draw"</span> pathLength=<span class="s">"100"</span>
+      d=<span class="s">"M180,150 L250,150"</span> /&gt;</div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2 class="reveal" style="--i:5"><span class="kicker">03</span> The anatomy of the file</h2>
+    <p class="lede">
+      Every composition is one HTML document with a consistent <b>house design system</b>:
+      one accent color per piece, the whole palette derived from it, and motion that is
+      <b>choreography, not decoration</b>. It degrades gracefully for reduced-motion users.
+    </p>
+    <div class="props reveal" style="--i:6">
+      <span class="chip"><span class="dot"></span> Single .html file</span>
+      <span class="chip"><span class="dot"></span> Zero dependencies</span>
+      <span class="chip"><span class="dot"></span> Works offline</span>
+      <span class="chip"><span class="dot"></span> No build step</span>
+      <span class="chip"><span class="dot"></span> One accent + derived palette</span>
+      <span class="chip"><span class="dot"></span> prefers-reduced-motion safe</span>
+      <span class="chip"><span class="dot"></span> Query-param deep links</span>
+    </div>
+  </section>
+
+  <section>
+    <h2 class="reveal" style="--i:7"><span class="kicker">04</span> How a request becomes a page</h2>
+    <div class="steps">
+      <div class="step reveal" style="--i:8">
+        <div class="n">1</div>
+        <div>
+          <h3>Describe it</h3>
+          <p>You ask for what you want — "an interactive explainer of how X works" — the agent picks the right layout (sim, deck, form or diagram).</p>
+        </div>
+      </div>
+      <div class="step reveal" style="--i:9">
+        <div class="n">2</div>
+        <div>
+          <h3>The agent writes the HTML</h3>
+          <p><code>create_composition</code> emits a complete, self-contained file — markup, tokens, motion and JS all inline.</p>
+        </div>
+      </div>
+      <div class="step reveal" style="--i:10">
+        <div class="n">3</div>
+        <div>
+          <h3>Saved to the session</h3>
+          <p>It lands at <code>~/.jazz/compositions/&lt;session&gt;/&lt;name&gt;.html</code> and opens in your browser automatically.</p>
+        </div>
+      </div>
+      <div class="step reveal" style="--i:11">
+        <div class="n">4</div>
+        <div>
+          <h3>Iterate or publish</h3>
+          <p>Tweak it in the chat, or <code>publish_composition</code> pushes it to a stable, shareable URL.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2 class="reveal" style="--i:12"><span class="kicker">05</span> Take it further</h2>
+    <p class="lede reveal" style="--i:13">
+      This whole flow runs inside the Jazz CLI. Install it, talk to an agent, and
+      compositions just appear in your browser.
+    </p>
+    <div class="cta reveal" style="--i:14">
+      <a class="btn btn-primary" href="https://jazz-cli.vercel.app" target="_blank" rel="noopener">
+        Get the Jazz CLI
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M6 3h5v5M11 3L5.5 8.5M9.5 8.5H4V2.5h6v6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </a>
+      <a class="btn btn-ghost" href="https://jazz-cli.vercel.app/docs" target="_blank" rel="noopener">
+        Read the docs
+      </a>
+    </div>
+    <p class="lede reveal" style="--i:15" style="margin-top:var(--space-4);font-size:0.88rem;">
+      This very page was made with the tool it's describing.
+      <a href="https://jazz-cli.vercel.app" style="color:var(--accent-text)"><code>create_composition</code> → publish</a>
+    </p>
+  </section>
+
+  <footer class="reveal" style="--i:16">
+    <span>Made with <a href="https://jazz-cli.vercel.app">Jazz</a> · <code>create_composition</code></span>
+    <span>self-contained · offline · no build</span>
+  </footer>
+</main>
+
+<script>
+// Tabs
+const tabs = document.querySelectorAll(".tabs button");
+const panels = document.querySelectorAll(".panel");
+tabs.forEach(t => t.addEventListener("click", () => {
+  tabs.forEach(x => x.setAttribute("aria-selected", String(x === t)));
+  panels.forEach(p => p.classList.toggle("active", p.id === "p-" + t.dataset.t));
+  const k = new URLSearchParams(location.search);
+  k.set("t", t.dataset.t);
+  history.replaceState(null, "", `${location.pathname}?${k}`);
+}));
+const tk = new URLSearchParams(location.search).get("t");
+if (tk && document.getElementById("tab-" + tk)) {
+  document.getElementById("tab-" + tk).click();
+}
+</script>
+</body>
+</html>
